@@ -42,11 +42,15 @@ fi
 
 ROOTFS_SIZE="32M"
 if [[ "${AXIOM_PACKAGE_CHROMIUM:-0}" == "1" || "${AXIOM_PACKAGE_CHROMIUM:-0}" == "ON" || "${AXIOM_PACKAGE_CHROMIUM:-0}" == "true" ]]; then
-    ROOTFS_SIZE="512M"
-    echo "[rootfs] Staging Chromium runtime into rootfs..."
+    ROOTFS_SIZE="120M"
+    echo "[rootfs] Staging stripped Chromium headless shell into rootfs (< 120MB target)..."
     if docker image inspect axiom-test-env >/dev/null 2>&1; then
         docker run --rm -v "${STAGING_DIR}":/dest axiom-test-env sh -c \
-            "cp -a /usr/lib/chromium /dest/usr/lib/ && cp -a /usr/bin/chromium* /dest/usr/bin/ 2>/dev/null || true"
+            "cp -a /usr/lib/chromium /dest/usr/lib/ && \
+             cp -a /usr/bin/chromium* /dest/usr/bin/ 2>/dev/null || true && \
+             find /dest/usr/lib/chromium/locales/ -type f ! -name 'en-US.pak' -delete 2>/dev/null || true && \
+             rm -rf /dest/usr/lib/chromium/swiftshader /dest/usr/lib/chromium/*alsa* /dest/usr/lib/chromium/*pulse* 2>/dev/null || true && \
+             find /dest/usr/lib /dest/usr/bin -type f -exec strip --strip-unneeded {} + 2>/dev/null || true"
     fi
 fi
 

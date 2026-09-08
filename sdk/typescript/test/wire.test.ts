@@ -3,27 +3,36 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  CdpActionType,
+  HEADER_SIZE,
   Opcode,
+  WIRE_MAGIC,
   decodeAstPatchResponse,
   decodeAstSliceResponse,
   decodeAstSymbolsResponse,
   decodeCdpResponse,
   decodeExecResponse,
   decodeHeader,
+  decodeReadFileResponse,
+  decodeWriteFileResponse,
   encodeAstPatchRequest,
   encodeAstSliceRequest,
   encodeAstSymbolsRequest,
   encodeCdpRequest,
   encodeExecRequest,
   encodeHeader,
-  CdpActionType,
+  encodeReadFileRequest,
+  encodeWriteFileRequest,
 } from "../src/wire.js";
 
 test("wire header encode and decode roundtrip", () => {
-  const buf = encodeHeader(Opcode.PING, 42n, 128);
+  const buf = encodeHeader(Opcode.PING, 42, 128);
+  assert.equal(buf.length, HEADER_SIZE);
+  assert.equal(buf.length, 12);
   const hdr = decodeHeader(buf);
+  assert.equal(hdr.magic, WIRE_MAGIC);
   assert.equal(hdr.opcode, Opcode.PING);
-  assert.equal(hdr.requestId, 42n);
+  assert.equal(hdr.requestId, 42);
   assert.equal(hdr.payloadLen, 128);
 });
 
@@ -35,7 +44,7 @@ test("exec request and response roundtrip", () => {
     captureDiff: true,
     timeoutMs: 5000,
   });
-  assert.ok(reqBuf.length >= 16);
+  assert.ok(reqBuf.length >= 12);
 
   const payload = Buffer.alloc(24 + 5 + 4);
   payload.writeInt32LE(0, 0);
@@ -125,4 +134,31 @@ test("cdp action request and response roundtrip", () => {
   assert.equal(resp.status, 0);
   assert.equal(resp.nodeCount, 1);
   assert.equal(resp.treeText, '[1] RootWebArea "Index"');
+});
+
+test("file read and write request/response roundtrip", () => {
+  const writeReq = encodeWriteFileRequest("/tmp/test.txt", "content");
+  assert.ok(writeReq.length >= 12);
+
+  const writeRespBuf = Buffer.alloc(8);
+  writeRespBuf.writeInt32LE(0, 0);
+  writeRespBuf.writeUInt32LE(7, 4);
+  const writeResp = decodeWriteFileResponse(writeRespBuf);
+  assert.equal(writeResp.status, 0);
+  assert.equal(writeResp.bytesWritten, 7);
+
+  const readReq = encodeReadFileRequest("/tmp/test.txt");
+  assert.ok(readReq.length >= 4);
+
+  const readData = Buffer.from("content", "utf-8");
+  const readRespBuf = Buffer.alloc(12 + readData.length);
+  readRespBuf.writeInt32LE(0, 0);
+  readRespBuf.writeUInt32LE(readData.length, 4);
+  readRespBuf.writeUInt32LE(readData.length, 8);
+  readData.copy(readRespBuf, 12);
+
+  const readResp = decodeReadFileResponse(readRespBuf);
+  assert.equal(readResp.status, 0);
+  assert.equal(readResp.totalSize, 7);
+  assert.equal(readResp.content.toString("utf-8"), "content");
 });

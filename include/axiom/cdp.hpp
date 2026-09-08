@@ -2,11 +2,13 @@
 
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <poll.h>
 #include <span>
 #include <string_view>
 #include <sys/wait.h>
@@ -893,8 +895,9 @@ private:
         return req_id;
     }
 
-    /// Reads incoming null-delimited CDP messages until one matching req_id arrives.
-    auto read_msg_matching(int req_id) noexcept -> Result<std::string_view> {
+    /// Reads incoming null-delimited CDP messages until one matching req_id arrives or timeout
+    /// expires.
+    auto read_msg_matching(int req_id, int timeout_ms = 2000) noexcept -> Result<std::string_view> {
         if (from_chrome_fd_ < 0) {
             return std::unexpected(SystemError::IoError);
         }
@@ -904,7 +907,28 @@ private:
         int n = snprintf(id_needle.data(), id_needle.size(), "\"id\":%d", req_id);
         std::string_view needle(id_needle.data(), n > 0 ? static_cast<size_t>(n) : 0);
 
+        pollfd pfd{
+            .fd = from_chrome_fd_,
+            .events = POLLIN,
+            .revents = 0,
+        };
+
+        auto start_time = std::chrono::steady_clock::now();
+
         while (true) {
+            auto now = std::chrono::steady_clock::now();
+            int elapsed = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count());
+            int rem = timeout_ms - elapsed;
+            if (rem <= 0) {
+                return std::unexpected(SystemError::IoError);
+            }
+
+            int pr = poll(&pfd, 1, rem);
+            if (pr <= 0) {
+                return std::unexpected(SystemError::IoError);
+            }
+
             char c = '\0';
             ssize_t rd = read(from_chrome_fd_, &c, 1);
             if (rd <= 0) {

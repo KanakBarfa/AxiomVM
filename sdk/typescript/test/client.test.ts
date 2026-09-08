@@ -43,7 +43,7 @@ test("AxiomClient client-server integration loopback", async () => {
           diff.copy(respPayload, 24 + out.length);
 
           const respHdr = encodeHeader(
-            Opcode.EXEC_RESPONSE,
+            Opcode.EXEC_OUTPUT,
             hdr.requestId,
             respPayload.length
           );

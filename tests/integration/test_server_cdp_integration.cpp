@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include <span>
+#include <string>
 #include <string_view>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -65,6 +66,45 @@ void test_server_cdp_dispatch() {
         unlink(socket_path);
         std::abort();
     }
+
+    int to_chrome[2]{-1, -1};
+    int from_chrome[2]{-1, -1};
+    if (pipe(to_chrome) != 0 || pipe(from_chrome) != 0) {
+        close(listener_fd);
+        unlink(socket_path);
+        std::abort();
+    }
+    auto bridge_init = server.cdp_bridge().init_from_fds(to_chrome[1], from_chrome[0]);
+    if (!bridge_init) {
+        close(listener_fd);
+        unlink(socket_path);
+        std::abort();
+    }
+
+    std::thread mock_chrome([to_fd = to_chrome[0], from_fd = from_chrome[1]]() {
+        std::string req;
+        char c = '\0';
+        while (read(to_fd, &c, 1) > 0) {
+            if (c == '\0') {
+                size_t id_pos = req.find("\"id\":");
+                if (id_pos != std::string::npos) {
+                    int req_id = std::atoi(req.c_str() + id_pos + 5);
+                    std::string resp =
+                        "{\"id\":" + std::to_string(req_id) +
+                        ",\"result\":{\"nodes\":[{\"nodeId\":\"1\",\"role\":{\"value\":\"button\"},"
+                        "\"name\":{\"value\":\"Submit\"},\"backendDOMNodeId\":101}]}}";
+                    if (write(from_fd, resp.c_str(), resp.size() + 1) < 0) {
+                        break;
+                    }
+                }
+                req.clear();
+            } else {
+                req += c;
+            }
+        }
+        close(to_fd);
+        close(from_fd);
+    });
 
     std::thread server_thread(run_server_loop, &server);
 
@@ -247,6 +287,7 @@ void test_server_cdp_dispatch() {
     // Send Shutdown
     server.stop();
     server_thread.join();
+    mock_chrome.join();
     close(client_fd);
     close(listener_fd);
     unlink(socket_path);

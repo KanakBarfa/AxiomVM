@@ -11,18 +11,24 @@ import {
   ExecResponse,
   HEADER_SIZE,
   Opcode,
+  ReadFileResponse,
+  WriteFileResponse,
   decodeAstPatchResponse,
   decodeAstSliceResponse,
   decodeAstSymbolsResponse,
   decodeCdpResponse,
   decodeExecResponse,
   decodeHeader,
+  decodeReadFileResponse,
+  decodeWriteFileResponse,
   encodeAstPatchRequest,
   encodeAstSliceRequest,
   encodeAstSymbolsRequest,
   encodeCdpRequest,
   encodeExecRequest,
   encodeHeader,
+  encodeReadFileRequest,
+  encodeWriteFileRequest,
 } from "./wire.js";
 
 export interface AxiomClientOptions {
@@ -39,7 +45,7 @@ export class AxiomClient {
   private port?: number;
   private timeoutMs: number;
   private socket: net.Socket | null = null;
-  private requestIdCounter: bigint = 1n;
+  private requestIdCounter: number = 1;
   private buffer: Buffer = Buffer.alloc(0);
 
   constructor(options: AxiomClientOptions = {}) {
@@ -109,7 +115,7 @@ export class AxiomClient {
       throw new Error("Socket disconnected");
     }
 
-    const reqId = this.requestIdCounter++;
+    const reqId = (this.requestIdCounter++) >>> 0;
     const header = encodeHeader(opcode, reqId, payload.length);
     const frame = Buffer.concat([header, payload]);
 
@@ -166,7 +172,7 @@ export class AxiomClient {
     const { payload: respPayload, latencyMs } = await this.exchange(
       Opcode.EXEC,
       payload,
-      Opcode.EXEC_RESPONSE
+      Opcode.EXEC_OUTPUT
     );
     const resp = decodeExecResponse(respPayload);
     return { ...resp, latencyMs };
@@ -214,6 +220,36 @@ export class AxiomClient {
       Opcode.AST_PATCH_RESPONSE
     );
     const resp = decodeAstPatchResponse(respPayload);
+    return { ...resp, latencyMs };
+  }
+
+  // Reads a file from the guest filesystem over vsock.
+  async readFile(
+    filePath: string
+  ): Promise<ReadFileResponse & { latencyMs: number }> {
+    const payload = encodeReadFileRequest(filePath);
+    const { payload: respPayload, latencyMs } = await this.exchange(
+      Opcode.READ_FILE,
+      payload,
+      Opcode.READ_FILE_RESPONSE
+    );
+    const resp = decodeReadFileResponse(respPayload);
+    return { ...resp, latencyMs };
+  }
+
+  // Writes a file to the guest filesystem over vsock.
+  async writeFile(
+    filePath: string,
+    content: Buffer | Uint8Array | string,
+    mode: number = 0o644
+  ): Promise<WriteFileResponse & { latencyMs: number }> {
+    const payload = encodeWriteFileRequest(filePath, content, mode);
+    const { payload: respPayload, latencyMs } = await this.exchange(
+      Opcode.WRITE_FILE,
+      payload,
+      Opcode.WRITE_FILE_RESPONSE
+    );
+    const resp = decodeWriteFileResponse(respPayload);
     return { ...resp, latencyMs };
   }
 
