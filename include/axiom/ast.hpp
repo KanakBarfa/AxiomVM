@@ -24,6 +24,12 @@ const TSLanguage* tree_sitter_go(void);
 
 /// Tree-sitter language entry point for Rust.
 const TSLanguage* tree_sitter_rust_orchard(void);
+
+/// Tree-sitter language entry point for Python.
+const TSLanguage* tree_sitter_python(void);
+
+/// Tree-sitter language entry point for TypeScript.
+const TSLanguage* tree_sitter_typescript(void);
 }
 
 namespace axiom::ast {
@@ -35,6 +41,9 @@ enum class Lang : uint8_t {
     Cpp,
     Go,
     Rust,
+    Python,
+    TypeScript,
+    JavaScript,
 };
 
 /// High-level symbolic category extracted from source AST.
@@ -98,6 +107,15 @@ inline constexpr size_t MAX_SYMBOL_NAME_LEN = 96;
     }
     if (ext == ".rs") {
         return Lang::Rust;
+    }
+    if (ext == ".py") {
+        return Lang::Python;
+    }
+    if (ext == ".ts" || ext == ".tsx") {
+        return Lang::TypeScript;
+    }
+    if (ext == ".js" || ext == ".jsx" || ext == ".mjs" || ext == ".cjs") {
+        return Lang::JavaScript;
     }
     return Lang::Unknown;
 }
@@ -173,6 +191,11 @@ public:
             return tree_sitter_go();
         case Lang::Rust:
             return tree_sitter_rust_orchard();
+        case Lang::Python:
+            return tree_sitter_python();
+        case Lang::TypeScript:
+        case Lang::JavaScript:
+            return tree_sitter_typescript();
         default:
             return nullptr;
         }
@@ -573,6 +596,99 @@ private:
                 }
                 return;
             }
+        } else if (lang == Lang::Python) {
+            if (type == "function_definition") {
+                TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+                SymbolKind k = parent_scope.empty() ? SymbolKind::Function : SymbolKind::Method;
+                record_symbol(k, node_text(name_node, src), node, out, parent_scope);
+                return;
+            }
+            if (type == "class_definition") {
+                TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+                std::string_view class_name = node_text(name_node, src);
+                record_symbol(SymbolKind::Class, class_name, node, out, parent_scope);
+
+                TSNode body = ts_node_child_by_field_name(node, "body", 4);
+                if (!ts_node_is_null(body)) {
+                    uint32_t count = ts_node_named_child_count(body);
+                    for (uint32_t i = 0; i < count; ++i) {
+                        collect_symbols_recursive(ts_node_named_child(body, i), src, lang, out,
+                                                  class_name);
+                    }
+                }
+                return;
+            }
+            if (type == "import_statement" || type == "import_from_statement") {
+                std::string_view full_text = node_text(node, src);
+                while (!full_text.empty() &&
+                       (full_text.back() == '\n' || full_text.back() == '\r')) {
+                    full_text.remove_suffix(1);
+                }
+                record_symbol(SymbolKind::Import, full_text, node, out, parent_scope);
+                return;
+            }
+        } else if (lang == Lang::TypeScript || lang == Lang::JavaScript) {
+            if (type == "function_declaration" || type == "function_signature") {
+                TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+                SymbolKind k = parent_scope.empty() ? SymbolKind::Function : SymbolKind::Method;
+                record_symbol(k, node_text(name_node, src), node, out, parent_scope);
+                return;
+            }
+            if (type == "method_definition" || type == "method_signature") {
+                TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+                record_symbol(SymbolKind::Method, node_text(name_node, src), node, out,
+                              parent_scope);
+                return;
+            }
+            if (type == "class_declaration" || type == "class") {
+                TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+                std::string_view class_name = node_text(name_node, src);
+                record_symbol(SymbolKind::Class, class_name, node, out, parent_scope);
+
+                TSNode body = ts_node_child_by_field_name(node, "body", 4);
+                if (!ts_node_is_null(body)) {
+                    uint32_t count = ts_node_named_child_count(body);
+                    for (uint32_t i = 0; i < count; ++i) {
+                        collect_symbols_recursive(ts_node_named_child(body, i), src, lang, out,
+                                                  class_name);
+                    }
+                }
+                return;
+            }
+            if (type == "interface_declaration") {
+                TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+                record_symbol(SymbolKind::Interface, node_text(name_node, src), node, out,
+                              parent_scope);
+                return;
+            }
+            if (type == "type_alias_declaration") {
+                TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+                record_symbol(SymbolKind::TypeAlias, node_text(name_node, src), node, out,
+                              parent_scope);
+                return;
+            }
+            if (type == "enum_declaration") {
+                TSNode name_node = ts_node_child_by_field_name(node, "name", 4);
+                record_symbol(SymbolKind::Enum, node_text(name_node, src), node, out, parent_scope);
+                return;
+            }
+            if (type == "import_statement") {
+                std::string_view full_text = node_text(node, src);
+                while (!full_text.empty() &&
+                       (full_text.back() == '\n' || full_text.back() == '\r' ||
+                        full_text.back() == ';')) {
+                    full_text.remove_suffix(1);
+                }
+                record_symbol(SymbolKind::Import, full_text, node, out, parent_scope);
+                return;
+            }
+            if (type == "export_statement") {
+                TSNode decl = ts_node_child_by_field_name(node, "declaration", 11);
+                if (!ts_node_is_null(decl)) {
+                    collect_symbols_recursive(decl, src, lang, out, parent_scope);
+                    return;
+                }
+            }
         }
 
         uint32_t count = ts_node_named_child_count(node);
@@ -591,7 +707,40 @@ private:
             }
         }
 
-        // Priority 2: Scoped suffix match
+        // Priority 2: Match with '.' <-> "::" equivalence
+        for (const auto& sym : symbols) {
+            std::string_view name = sym.symbol_name();
+            size_t i = 0;
+            size_t j = 0;
+            bool match = true;
+            while (i < name.size() && j < query.size()) {
+                if (name[i] == ':' && i + 1 < name.size() && name[i + 1] == ':') {
+                    if (query[j] == '.') {
+                        i += 2;
+                        j += 1;
+                        continue;
+                    }
+                    if (j + 1 < query.size() && query[j] == ':' && query[j + 1] == ':') {
+                        i += 2;
+                        j += 2;
+                        continue;
+                    }
+                    match = false;
+                    break;
+                }
+                if (name[i] != query[j]) {
+                    match = false;
+                    break;
+                }
+                ++i;
+                ++j;
+            }
+            if (match && i == name.size() && j == query.size()) {
+                return &sym;
+            }
+        }
+
+        // Priority 3: Scoped suffix match
         for (const auto& sym : symbols) {
             std::string_view name = sym.symbol_name();
             if (name.size() > query.size() + 2) {

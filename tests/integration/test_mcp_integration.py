@@ -25,6 +25,8 @@ from axiom.wire import (
     AstSymbolsResponse,
     CdpActionResponse,
     ExecResponse,
+    ReadFileResponse,
+    WriteFileResponse,
 )
 
 
@@ -50,6 +52,8 @@ def test_mcp_tool_registration() -> None:
             "axiom_ast_symbols",
             "axiom_ast_slice",
             "axiom_ast_patch",
+            "axiom_read_file",
+            "axiom_write_file",
             "axiom_browser_navigate",
             "axiom_browser_action",
             "axiom_snapshot",
@@ -142,6 +146,46 @@ def test_mcp_ast_tools_invocation() -> None:
                 },
             )
             assert "Patched 'add'" in extract_text(patch_res)
+
+    asyncio.run(run())
+
+
+def test_mcp_file_tools_invocation() -> None:
+    """Tests file read and write tools through MCP server."""
+
+    async def run() -> None:
+        with patch("axiom.mcp_server.get_or_create_vm") as mock_get_vm:
+            mock_vm = MagicMock()
+            mock_vm.read_file.return_value = (
+                ReadFileResponse(
+                    status=0,
+                    total_size=12,
+                    content=b"hello world\n",
+                ),
+                0.0005,
+            )
+            mock_vm.write_file.return_value = (
+                WriteFileResponse(
+                    status=0,
+                    bytes_written=12,
+                ),
+                0.0006,
+            )
+            mock_get_vm.return_value = mock_vm
+
+            read_res = await server.call_tool(
+                "axiom_read_file", {"file_path": "/tmp/test.txt"}
+            )
+            text = extract_text(read_res)
+            assert "hello world" in text
+            assert "/tmp/test.txt" in text
+
+            write_res = await server.call_tool(
+                "axiom_write_file",
+                {"file_path": "/tmp/test.txt", "content": "hello world\n"},
+            )
+            write_text = extract_text(write_res)
+            assert "Successfully wrote 12 bytes" in write_text
 
     asyncio.run(run())
 

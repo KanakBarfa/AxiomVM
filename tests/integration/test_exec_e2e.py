@@ -183,3 +183,52 @@ def test_microvm_exec_benchmark(artifacts: tuple[Path, Path]) -> None:
         )
 
         assert min_axiom_ms < 15.0, f"Latency {min_axiom_ms:.2f}ms exceeded 15ms target"
+
+
+def test_microvm_file_rpc_and_mounts(
+    artifacts: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Verifies native file read/write RPCs and workspace mount bidirectional synchronization."""
+    kernel_path, rootfs_path = artifacts
+    host_mount = tmp_path / "workspace_host"
+    host_mount.mkdir(parents=True, exist_ok=True)
+    (host_mount / "source.txt").write_text("initial host content\n")
+
+    work_dir = tmp_path / "axiom_fc_mounts"
+
+    with MicroVM(
+        kernel_path=kernel_path,
+        rootfs_path=rootfs_path,
+        work_dir=work_dir,
+        mounts=[f"{host_mount}:/workspace"],
+    ) as vm:
+        # 1. Test native file write RPC
+        w_resp, w_lat = vm.write_file(
+            "/tmp/direct.txt", "Direct vsock write payload\n"
+        )
+        assert w_resp.status == 0
+        assert w_resp.bytes_written == len("Direct vsock write payload\n")
+        assert w_lat < 0.01
+
+        # 2. Test native file read RPC
+        r_resp, r_lat = vm.read_file("/tmp/direct.txt")
+        assert r_resp.status == 0
+        assert r_resp.content == b"Direct vsock write payload\n"
+        assert r_lat < 0.01
+
+        # 3. Test large chunked write and read
+        large_data = b"A" * 70000
+        bytes_written = vm.write_file_all("/tmp/large.bin", large_data)
+        assert bytes_written == 70000
+        read_back = vm.read_file_all("/tmp/large.bin")
+        assert read_back == large_data
+
+        # 4. Test mount sync to guest and exec inside /workspace
+        resp, _ = vm.exec("cat source.txt && echo 'guest modification' >> modified.txt")
+        assert resp.exit_code == 0
+        assert "initial host content" in resp.output
+
+        # 5. Verify modified file is automatically synced back to host
+        host_modified = host_mount / "modified.txt"
+        assert host_modified.is_file()
+        assert "guest modification" in host_modified.read_text()

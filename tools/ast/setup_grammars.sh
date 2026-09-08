@@ -34,9 +34,22 @@ stage_grammar() {
         rm -rf "${VENDOR_DIR}/${lang}"
         mkdir -p "${VENDOR_DIR}/${lang}"
         tmp_dir="$(mktemp -d)"
-        git clone --depth 1 --branch "${git_tag}" "${repo_url}" "${tmp_dir}"
-        cp -r "${tmp_dir}"/src/* "${VENDOR_DIR}/${lang}/"
-        rm -rf "${tmp_dir}"
+        if git clone -c advice.detachedHead=false --depth 1 --branch "${git_tag}" "${repo_url}" "${tmp_dir}" --quiet; then
+            if [ -d "${tmp_dir}/typescript/src" ]; then
+                cp -r "${tmp_dir}"/typescript/src/* "${VENDOR_DIR}/${lang}/"
+                if [ -f "${tmp_dir}/common/scanner.h" ]; then
+                    cp "${tmp_dir}/common/scanner.h" "${VENDOR_DIR}/${lang}/scanner.h"
+                    sed -i 's|#include "../../common/scanner.h"|#include "scanner.h"|g' "${VENDOR_DIR}/${lang}/scanner.c"
+                fi
+            else
+                cp -r "${tmp_dir}"/src/* "${VENDOR_DIR}/${lang}/"
+            fi
+            rm -rf "${tmp_dir}"
+        else
+            rm -rf "${tmp_dir}"
+            echo "[grammars] Error: failed to clone ${repo_url} (${git_tag})" >&2
+            exit 1
+        fi
     fi
 }
 
@@ -44,6 +57,8 @@ stage_grammar "c" "/usr/src/tree-sitter/c/*/parser/src" "https://github.com/tree
 stage_grammar "cpp" "/usr/src/tree-sitter/cpp/*/parser/src" "https://github.com/tree-sitter/tree-sitter-cpp.git" "v0.22.0"
 stage_grammar "go" "/usr/src/tree-sitter/go/*/parser/src" "https://github.com/tree-sitter/tree-sitter-go.git" "v0.21.0"
 stage_grammar "rust" "/usr/src/tree-sitter/rust-orchard/*/parser/src" "https://github.com/tree-sitter/tree-sitter-rust.git" "v0.21.2"
+stage_grammar "python" "/usr/src/tree-sitter/python/*/parser/src" "https://github.com/tree-sitter/tree-sitter-python.git" "v0.21.0"
+stage_grammar "typescript" "/usr/src/tree-sitter/typescript/*/parser/src" "https://github.com/tree-sitter/tree-sitter-typescript.git" "v0.21.0"
 
 if [ -f "${VENDOR_DIR}/rust/parser.c" ]; then
     if grep -q "tree_sitter_rust(" "${VENDOR_DIR}/rust/parser.c" && ! grep -q "tree_sitter_rust_orchard" "${VENDOR_DIR}/rust/parser.c"; then

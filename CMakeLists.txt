@@ -54,6 +54,10 @@ if(EXISTS "${GRAMMAR_DIR}/c/parser.c")
         "${GRAMMAR_DIR}/go/parser.c"
         "${GRAMMAR_DIR}/rust/parser.c"
         "${GRAMMAR_DIR}/rust/scanner.c"
+        "${GRAMMAR_DIR}/python/parser.c"
+        "${GRAMMAR_DIR}/python/scanner.c"
+        "${GRAMMAR_DIR}/typescript/parser.c"
+        "${GRAMMAR_DIR}/typescript/scanner.c"
     )
 
     add_library(axiom_grammars STATIC ${TS_GRAMMAR_SOURCES})
@@ -66,6 +70,8 @@ if(EXISTS "${GRAMMAR_DIR}/c/parser.c")
         "${GRAMMAR_DIR}/cpp"
         "${GRAMMAR_DIR}/go"
         "${GRAMMAR_DIR}/rust"
+        "${GRAMMAR_DIR}/python"
+        "${GRAMMAR_DIR}/typescript"
     )
     target_compile_options(axiom_grammars PRIVATE -w -O2)
     target_link_libraries(axiom_grammars PUBLIC tree-sitter)
