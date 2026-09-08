@@ -1,0 +1,21 @@
+---
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  performance-*,
+  readability-*,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-std-print,
+  -modernize-avoid-c-arrays,
+  -readability-magic-numbers,
+  -cert-err33-c,
+  -cert-err58-cpp,
+  -cert-err60-cpp
+
+WarningsAsErrors: ''
+HeaderFilterRegex: 'axiom/.*'
+FormatStyle: file
+...

@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-format:
+    name: Lint & Format Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned clang-format
+        run: pip install clang-format==21.1.8
+
+      - name: Verify clang-format
+        run: |
+          find guest include tests -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) | xargs clang-format --dry-run --Werror
+
+  build-and-test:
+    name: Build & Integration Tests
+    runs-on: ubuntu-24.04
+    needs: [lint-and-format]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-14 cmake ninja-build python3 python3-pytest python3-pip nodejs npm \
+            libtree-sitter-dev git
+          pip install --break-system-packages -e .
+
+      - name: Stage grammars
+        run: |
+          ./tools/ast/setup_grammars.sh
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=g++-14 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DAXIOM_BUILD_TESTS=ON \
+            -DAXIOM_WARNINGS_AS_ERRORS=ON
+
+      - name: Compile targets
+        run: |
+          cmake --build build
+
+      - name: Run integration tests
+        run: |
+          ctest --test-dir build --output-on-failure
+
+      - name: Run TypeScript SDK tests
+        run: |
+          npm install --prefix sdk/typescript
+          npm run prepublishOnly --prefix sdk/typescript
+
+  hermetic-musl-build:
+    name: Hermetic Musl Static Build
+    runs-on: ubuntu-24.04
+    needs: [lint-and-format]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Stage grammars
+        run: |
+          ./tools/ast/setup_grammars.sh
+
+      - name: Build static axiom-initd via Alpine musl container
+        run: |
+          docker run --rm -v "${{ github.workspace }}":/src -w /src alpine:3.21 sh -c \
+            "apk update && apk add --no-cache build-base clang llvm cmake ninja musl-dev linux-headers file busybox-static tree-sitter-dev tree-sitter-static git bash && \
+             cmake -B build-musl -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DAXIOM_STATIC_BUILD=ON -DAXIOM_BUILD_TESTS=OFF -DAXIOM_WARNINGS_AS_ERRORS=ON && \
+             cmake --build build-musl --target axiom-initd"
+
+      - name: Verify static binary invariant
+        run: |
+          file build-musl/bin/axiom-initd | grep -i "statically linked"

@@ -1,0 +1,42 @@
+{
+  "ast_benchmark": {
+    "file": "server_router.cpp",
+    "raw_file_tokens": 261,
+    "symbols_outline_tokens": 43,
+    "slice_tokens": 55,
+    "axiom_total_tokens": 98,
+    "tokens_saved": 163,
+    "reduction_percent": 62.45
+  },
+  "exec_benchmarks": [
+    {
+      "scenario": "ansi_test_output",
+      "raw_shell_tokens": 215,
+      "axiom_exec_tokens": 117,
+      "tokens_saved": 98,
+      "reduction_percent": 45.58
+    },
+    {
+      "scenario": "diff_vs_cat_feedback",
+      "raw_shell_tokens": 92,
+      "axiom_exec_tokens": 32,
+      "tokens_saved": 60,
+      "reduction_percent": 65.22
+    }
+  ],
+  "browser_benchmark": {
+    "scenario": "dashboard_navigation",
+    "baseline_vision_tokens": 1600,
+    "baseline_dom_tokens": 615,
+    "axiom_axtree_tokens": 141,
+    "vision_savings_percent": 91.19,
+    "dom_savings_percent": 77.07
+  },
+  "snapshot_benchmark": {
+    "iterations": 2,
+    "cold_boot_mean_ms": 157.6,
+    "snapshot_restore_mean_ms": 3.74,
+    "branch_spawn_mean_ms": 4.7,
+    "speedup_factor": 42.11
+  }
+}

@@ -1,0 +1,55 @@
+# Build directories
+build/
+bin/
+lib/
+out/
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Makefile
+*.ninja
+.ninja_*
+
+# Clang / IDE
+.cache/
+.clangd/
+.vscode/
+.idea/
+
+# Binaries and object files
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+# Core dumps and logs
+core
+core.*
+*.log
+
+# Python / Tests
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# MicroVM and appliance artifacts
+tools/kernel/vmlinux
+build-musl/
+*.ext4
+*.sock
+*.img
+vendor/
+
+# Node / TypeScript
+node_modules/
+dist/
+package-lock.json

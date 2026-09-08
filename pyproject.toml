@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "axiom-vm"
+version = "0.1.0"
+description = "The Token-First MicroVM Appliance for AI Agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "AxiomVM Contributors" }
+]
+keywords = ["microvm", "ai-agents", "firecracker", "mcp", "tokens", "ast", "cdp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: System :: Emulators",
+]
+dependencies = [
+    "mcp>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+]
+
+[project.scripts]
+axiom = "axiom.cli:main"
+axiom-mcp = "axiom.mcp_server:main"
+
+[project.urls]
+Homepage = "https://github.com/KanakBarfa/AxiomVM"
+Repository = "https://github.com/KanakBarfa/AxiomVM"
+Issues = "https://github.com/KanakBarfa/AxiomVM/issues"
+
+[tool.setuptools.packages.find]
+where = ["host"]
+include = ["axiom*"]
