@@ -73,6 +73,15 @@ Frame Topology:
 [Magic: 2B (0xAA55)][Opcode: 2B][RequestID: 4B][PayloadLen: 4B][Payload Data: NB]
 ```
 
+Standard Opcodes:
+- `Ping` (`0x0001`) / `Pong` (`0x0002`)
+- `Exec` (`0x0010`) / `ExecOutput` (`0x0011`)
+- `AstSymbols` (`0x0020`) / `AstSlice` (`0x0021`) / `AstPatch` (`0x0022`)
+- `CdpAction` (`0x0030`) / `CdpActionResponse` (`0x0031`)
+- `ReadFile` (`0x0040`) / `ReadFileResponse` (`0x0041`)
+- `WriteFile` (`0x0042`) / `WriteFileResponse` (`0x0043`)
+- `Shutdown` (`0x00FF`)
+
 Compile-Time Aggregate Reflection via `boost::pfr`:
 Uses header-only structured binding reflection to serialize and deserialize POD frames directly without external code generators or runtime overhead:
 
@@ -108,7 +117,7 @@ Traditional daemons use complex runtime libraries. `axiom-initd` uses native Lin
 ### Subsystem C: AST-Virtual File System (AST-VFS)
 Bypasses manual CLI exploration commands (`ls`, `grep`, `cat`):
 
-- **Static Tree-sitter Linking**: Links the pure-C Tree-sitter runtime and specific language grammars (C, C++, Go, Rust) directly into `axiom-initd`.
+- **Static Tree-sitter Linking**: Links the pure-C Tree-sitter runtime and language grammars (Python, TypeScript, JavaScript, Rust, C, C++, Go) directly into `axiom-initd`.
 - **Symbolic Extraction**: The agent invokes `GET_SYMBOL(path, symbol_name)`. The guest parser reads the file, traverses the AST, and extracts only the relevant function or class declaration along with its type signature.
 - **Token Reduction**: Reduces context consumption for file discovery and context gathering by 80% to 90%.
 
@@ -123,6 +132,12 @@ Replaces multi-thousand-token vision screenshots with an accessibility DOM graph
   [@3] Link (text="Documentation", target="/docs")
   ```
 - **Targeted Dispatch**: The model interacts via lightweight calls (`ACT_CLICK(@2)`, `ACT_TYPE(@1, "Firecracker vsock")`), consuming 30-50 tokens instead of ~1,500 visual tokens.
+
+### Subsystem E: Workspace Directory Mounting and Vsock Sync
+Eliminates heavyweight network filesystems (9pfs, NFS) and privileged virtio-fs daemons:
+
+- **Bidirectional Host-Guest Sync**: Host directories are mounted into the microVM (`--mount host:guest`) via zero-copy virtio-vsock binary file streaming (`WriteFile`).
+- **Diff-Driven Host Backpropagation**: The appliance diff engine monitors in-guest modifications; created, updated, or removed files are synchronized back to the host filesystem automatically upon command completion.
 
 ## 4. C++23 Production Primitives
 

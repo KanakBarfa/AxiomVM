@@ -29,90 +29,77 @@ The Axiom Token Efficiency Benchmark (ATEB) suite quantifies real token reductio
 
 ## Quickstart Installation
 
-You can set up and run AxiomVM on any Linux host (x86_64) in under two minutes using prebuilt release assets.
+Set up and run AxiomVM on any Linux host (x86_64) with KVM enabled in under two minutes:
 
-### 1. Prerequisites
-
-AxiomVM requires Linux with KVM hardware virtualization enabled:
+### 1. Host Prerequisites
 
 ```bash
 # Enable KVM permissions for current user
 sudo usermod -aG kvm $USER
 newgrp kvm
-```
 
-Install Firecracker (v1.10+):
-```bash
+# Install Firecracker (v1.10+)
 ARCH="$(uname -m)"
 curl -L "https://github.com/firecracker-microvm/firecracker/releases/download/v1.10.1/firecracker-v1.10.1-${ARCH}.tgz" | tar -xz
 sudo mv "release-v1.10.1-${ARCH}/firecracker-v1.10.1-${ARCH}" /usr/local/bin/firecracker
 sudo chmod +x /usr/local/bin/firecracker
 ```
 
-### 2. Download and Install
-
-Install the Python CLI orchestrator and download prebuilt appliance assets:
+### 2. Install & Provision
 
 ```bash
-# Install AxiomVM Python package
+# Install Python CLI orchestrator
 pip install https://github.com/KanakBarfa/AxiomVM/releases/download/v0.1.0/axiom_vm-0.1.0-py3-none-any.whl
 
-# Download appliance assets
-mkdir -p ~/.axiom && cd ~/.axiom
-curl -LO https://github.com/KanakBarfa/AxiomVM/releases/download/v0.1.0/vmlinux
-curl -LO https://github.com/KanakBarfa/AxiomVM/releases/download/v0.1.0/axiom-rootfs.ext4
+# Download and cache prebuilt microVM assets into ~/.axiom/cache/
+axiom setup
 
-# Set asset environment variables (or add to ~/.bashrc)
-export AXIOM_KERNEL_PATH="$HOME/.axiom/vmlinux"
-export AXIOM_ROOTFS_PATH="$HOME/.axiom/axiom-rootfs.ext4"
-```
-
-### 3. Verify and Run
-
-Check host prerequisites:
-```bash
+# Validate virtualization environment
 axiom check
 ```
 
-Execute a command inside an isolated microVM:
-```bash
-axiom exec "uname -a"
-```
+### 3. Run & Mount Workspaces
 
-Boot an interactive appliance instance:
+Execute commands inside an isolated microVM with bidirectional workspace synchronization:
+
 ```bash
-axiom run
+# Mount host directory into guest workspace and execute
+axiom exec "pytest" --mount .:/workspace
+
+# Boot an interactive appliance with workspace mount
+axiom run --mount .:/workspace
 ```
 
 ---
 
 ## AI Agent Integration (Model Context Protocol / MCP)
 
-AxiomVM includes a native Model Context Protocol (MCP 2.x) daemon in [`host/axiom/mcp_server.py`](file:///home/kanak/AxiomVM/host/axiom/mcp_server.py) providing 8 tools for AI coding assistants:
+AxiomVM includes a native Model Context Protocol (MCP 2.x) daemon in [`host/axiom/mcp_server.py`](file:///home/kanak/AxiomVM/host/axiom/mcp_server.py) providing 10 tools for AI coding assistants:
 
 | MCP Tool | Description |
 |:---|:---|
 | `axiom_exec` | Executes commands inside the microVM with ANSI stripping and structured file diffs. |
-| `axiom_ast_symbols` | Returns concise symbol declarations from C, C++, Go, or Rust source files. |
+| `axiom_read_file` | Reads file content directly from microVM guest filesystem over virtio-vsock. |
+| `axiom_write_file` | Writes text content directly to microVM guest filesystem over virtio-vsock. |
+| `axiom_ast_symbols` | Returns concise symbol declarations from Python, TypeScript, JavaScript, Rust, C, C++, or Go files. |
 | `axiom_ast_slice` | Extracts the exact definition body of a function, struct, or class. |
 | `axiom_ast_patch` | Replaces a symbol definition atomically and returns updated line maps. |
 | `axiom_browser_navigate` | Navigates headless Chromium and returns an accessible semantic node tree (`[@1] button "Submit"`). |
 | `axiom_browser_action` | Dispatches click, type, or scroll actions against semantic element IDs without screenshots. |
 | `axiom_snapshot` | Creates a copy-on-write memory checkpoint of the running microVM in ~3ms. |
-| `axiom_branch` | Restores or branches from a named snapshot state instantly. |
+| `axiom_branch` | Restores or branches from a named snapshot state in < 25ms. |
 
-### Configuration for Claude Desktop, Cursor, Antigravity, and OpenCode
+### Configuration for AI Assistants
+
+Because `axiom setup` provisions assets to `~/.axiom/cache/`, MCP clients auto-resolve kernel and rootfs images with zero environment configuration:
 
 #### Antigravity (`~/.gemini/config/mcp_config.json`)
 ```json
 {
   "mcpServers": {
     "axiom": {
-      "command": "axiom-mcp",
-      "env": {
-        "AXIOM_KERNEL_PATH": "/home/user/.axiom/vmlinux",
-        "AXIOM_ROOTFS_PATH": "/home/user/.axiom/axiom-rootfs.ext4"
-      }
+      "command": "axiom",
+      "args": ["mcp"]
     }
   }
 }
@@ -125,11 +112,7 @@ AxiomVM includes a native Model Context Protocol (MCP 2.x) daemon in [`host/axio
   "mcp": {
     "axiom": {
       "type": "local",
-      "command": ["axiom-mcp"],
-      "environment": {
-        "AXIOM_KERNEL_PATH": "/home/user/.axiom/vmlinux",
-        "AXIOM_ROOTFS_PATH": "/home/user/.axiom/axiom-rootfs.ext4"
-      }
+      "command": ["axiom", "mcp"]
     }
   }
 }
@@ -140,11 +123,8 @@ AxiomVM includes a native Model Context Protocol (MCP 2.x) daemon in [`host/axio
 {
   "mcpServers": {
     "axiom": {
-      "command": "axiom-mcp",
-      "env": {
-        "AXIOM_KERNEL_PATH": "/home/user/.axiom/vmlinux",
-        "AXIOM_ROOTFS_PATH": "/home/user/.axiom/axiom-rootfs.ext4"
-      }
+      "command": "axiom",
+      "args": ["mcp"]
     }
   }
 }
