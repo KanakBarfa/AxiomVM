@@ -6,6 +6,7 @@ import argparse
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 from axiom.assets import DEFAULT_CACHE_DIR, download_assets, resolve_assets
@@ -108,7 +109,7 @@ def setup_assets(args: argparse.Namespace) -> int:
         print("Kernel ready at: " + str(kernel))
         print("Rootfs ready at: " + str(rootfs))
         return 0
-    except Exception as err:
+    except (OSError, RuntimeError, ValueError) as err:
         sys.stderr.write("Setup failed: " + str(err) + "\n")
         return 1
 
@@ -165,7 +166,10 @@ def run_appliance(args: argparse.Namespace) -> int:
         print("Press Ctrl+C to terminate appliance.")
         try:
             while vm.is_alive():
-                vm.process.wait(timeout=1.0)
+                if vm.process is not None:
+                    vm.process.wait(timeout=1.0)
+                else:
+                    time.sleep(1.0)
         except (KeyboardInterrupt, TimeoutError):
             pass
         finally:
@@ -204,7 +208,7 @@ def exec_command(args: argparse.Namespace) -> int:
             mounts=args.mount,
         )
         vm.start()
-        resp, latency = vm.exec(
+        resp, _latency = vm.exec(
             args.command,
             cwd=args.cwd or "",
             strip_ansi=not args.raw,

@@ -20,6 +20,7 @@ def test_cli_help() -> None:
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "host")},
         capture_output=True,
         text=True,
+        check=False,
     )
     assert proc.returncode == 0
     assert "AxiomVM: The Token-First MicroVM Appliance for AI Agents" in proc.stdout
@@ -39,6 +40,7 @@ def test_cli_info() -> None:
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "host")},
         capture_output=True,
         text=True,
+        check=False,
     )
     assert proc.returncode == 0
     assert "Version: 0.1.0" in proc.stdout
@@ -54,6 +56,7 @@ def test_cli_check_prerequisites() -> None:
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "host")},
         capture_output=True,
         text=True,
+        check=False,
     )
     assert "Checking AxiomVM host prerequisites..." in proc.stdout
     assert "[OK] Operating system: Linux" in proc.stdout
@@ -91,6 +94,7 @@ def test_cli_exec_e2e() -> None:
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "host")},
         capture_output=True,
         text=True,
+        check=False,
     )
     assert proc.returncode == 0
     assert "CLI_INTEGRATION_SUCCESS" in proc.stdout
@@ -104,6 +108,7 @@ def test_cli_setup_help() -> None:
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "host")},
         capture_output=True,
         text=True,
+        check=False,
     )
     assert proc.returncode == 0
     assert "--cache-dir" in proc.stdout
@@ -146,6 +151,7 @@ def test_cli_mount_e2e(tmp_path: Path) -> None:
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "host")},
         capture_output=True,
         text=True,
+        check=False,
     )
     assert proc.returncode == 0
     assert "hello from host" in proc.stdout

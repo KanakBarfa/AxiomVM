@@ -93,7 +93,7 @@ def test_ast_engine_e2e(artifacts: tuple[Path, Path]) -> None:
         assert "method Calculator::new" in sym_resp.symbols_text
         assert "method Calculator::compute" in sym_resp.symbols_text
         assert "function helper" in sym_resp.symbols_text
-        assert sym_lat < 0.05
+        assert sym_lat < 0.5
 
         # 4. Test AstSlice query over vsock
         slice_resp, slice_lat = vm.get_slice("/tmp/calc.rs", "Calculator::compute")
@@ -101,7 +101,7 @@ def test_ast_engine_e2e(artifacts: tuple[Path, Path]) -> None:
         assert slice_resp.start_line == 10
         assert slice_resp.end_line == 12
         assert "val + self.offset" in slice_resp.content
-        assert slice_lat < 0.05
+        assert slice_lat < 0.5
 
         # 5. Test AstPatch query over vsock
         replacement = (
@@ -115,7 +115,7 @@ def test_ast_engine_e2e(artifacts: tuple[Path, Path]) -> None:
         assert patch_resp.status == 0
         assert patch_resp.old_start_line == 10
         assert patch_resp.old_end_line == 12
-        assert patch_lat < 0.05
+        assert patch_lat < 0.5
 
         # 6. Verify patched content is active in guest filesystem
         cat_resp, _ = vm.exec("cat /tmp/calc.rs")

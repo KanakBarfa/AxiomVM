@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import socket
@@ -501,19 +502,15 @@ class MicroVM:
                         rel_path = guest_file[len(m.guest_path) :].lstrip("/")
                         target_file = m.host_path / rel_path
                         if action in ("+", "M"):
-                            try:
+                            with contextlib.suppress(Exception):
                                 data = self.read_file_all(guest_file)
                                 target_file.parent.mkdir(parents=True, exist_ok=True)
                                 target_file.write_bytes(data)
                                 total_synced += 1
-                            except Exception:
-                                pass
                         elif action == "-":
-                            try:
+                            with contextlib.suppress(OSError):
                                 target_file.unlink(missing_ok=True)
                                 total_synced += 1
-                            except OSError:
-                                pass
         return total_synced
 
     def get_symbols(

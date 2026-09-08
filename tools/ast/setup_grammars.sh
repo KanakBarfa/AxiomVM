@@ -34,16 +34,22 @@ stage_grammar() {
         rm -rf "${VENDOR_DIR}/${lang}"
         mkdir -p "${VENDOR_DIR}/${lang}"
         tmp_dir="$(mktemp -d)"
-        if [ -d "${tmp_dir}/typescript/src" ]; then
-            cp -r "${tmp_dir}"/typescript/src/* "${VENDOR_DIR}/${lang}/"
-            if [ -f "${tmp_dir}/common/scanner.h" ]; then
-                cp "${tmp_dir}/common/scanner.h" "${VENDOR_DIR}/${lang}/scanner.h"
-                sed -i 's|#include "../../common/scanner.h"|#include "scanner.h"|g' "${VENDOR_DIR}/${lang}/scanner.c"
+        if git clone -c advice.detachedHead=false --depth 1 --branch "${git_tag}" "${repo_url}" "${tmp_dir}" --quiet; then
+            if [ -d "${tmp_dir}/typescript/src" ]; then
+                cp -r "${tmp_dir}"/typescript/src/* "${VENDOR_DIR}/${lang}/"
+                if [ -f "${tmp_dir}/common/scanner.h" ]; then
+                    cp "${tmp_dir}/common/scanner.h" "${VENDOR_DIR}/${lang}/scanner.h"
+                    sed -i 's|#include "../../common/scanner.h"|#include "scanner.h"|g' "${VENDOR_DIR}/${lang}/scanner.c"
+                fi
+            else
+                cp -r "${tmp_dir}"/src/* "${VENDOR_DIR}/${lang}/"
             fi
+            rm -rf "${tmp_dir}"
         else
-            cp -r "${tmp_dir}"/src/* "${VENDOR_DIR}/${lang}/"
+            rm -rf "${tmp_dir}"
+            echo "[grammars] Error: failed to clone ${repo_url} (${git_tag})" >&2
+            exit 1
         fi
-        rm -rf "${tmp_dir}"
     fi
 }
 

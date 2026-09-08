@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import urllib.request
@@ -88,10 +89,8 @@ def resolve_assets(
 
     # 4. Auto-download if enabled
     if auto_download:
-        try:
+        with contextlib.suppress(Exception):
             return download_assets(c_dir)
-        except Exception:
-            pass
 
     return (
         cached_kernel if cached_kernel.is_file() else None,
