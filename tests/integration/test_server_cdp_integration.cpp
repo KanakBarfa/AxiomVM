@@ -93,7 +93,9 @@ void test_server_cdp_dispatch() {
                         "{\"id\":" + std::to_string(req_id) +
                         ",\"result\":{\"nodes\":[{\"nodeId\":\"1\",\"role\":{\"value\":\"button\"},"
                         "\"name\":{\"value\":\"Submit\"},\"backendDOMNodeId\":101}]}}";
-                    (void)write(from_fd, resp.c_str(), resp.size() + 1);
+                    if (write(from_fd, resp.c_str(), resp.size() + 1) < 0) {
+                        break;
+                    }
                 }
                 req.clear();
             } else {
