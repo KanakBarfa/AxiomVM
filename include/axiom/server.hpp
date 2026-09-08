@@ -132,25 +132,34 @@ private:
 
     /// Processes pending signals delivered via signalfd.
     void handle_signals() noexcept {
-        std::array<signalfd_siginfo, 8> sig_entries{};
-        auto read_res = signal_source_.read_signals(sig_entries);
-        if (!read_res) {
-            return;
-        }
+        std::array<signalfd_siginfo, 16> sig_entries{};
+        while (true) {
+            auto read_res = signal_source_.read_signals(sig_entries);
+            if (!read_res || *read_res == 0) {
+                break;
+            }
 
-        size_t count = *read_res;
-        for (size_t i = 0; i < count; ++i) {
-            uint32_t sig = sig_entries[i].ssi_signo;
-            if (sig == SIGCHLD) {
-                reap_children();
-            } else if (sig == SIGTERM || sig == SIGINT) {
-                running_ = false;
+            size_t count = *read_res;
+            for (size_t i = 0; i < count; ++i) {
+                uint32_t sig = sig_entries[i].ssi_signo;
+                if (sig == SIGCHLD) {
+                    reap_children();
+                } else if (sig == SIGTERM || sig == SIGINT) {
+                    running_ = false;
+                }
             }
         }
     }
 
-    /// Reaps terminated child processes without blocking.
+    /// Reaps terminated child processes without blocking to prevent PID exhaustion.
     static void reap_children() noexcept {
+        siginfo_t info{};
+        while (true) {
+            info.si_pid = 0;
+            if (waitid(P_ALL, 0, &info, WNOHANG | WEXITED) != 0 || info.si_pid == 0) {
+                break;
+            }
+        }
         int status = 0;
         while (waitpid(-1, &status, WNOHANG) > 0) {
         }
