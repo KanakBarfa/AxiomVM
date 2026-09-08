@@ -144,3 +144,49 @@ def test_ast_engine_e2e(artifacts: tuple[Path, Path]) -> None:
 
         err_slice_resp, _ = vm.get_slice("/tmp/calc.rs", "NonExistentSymbol")
         assert err_slice_resp.status != 0
+
+        # 10. Test Python AST symbol extraction and slicing
+        py_code = (
+            "class TaskRunner:\n"
+            "    def __init__(self, name: str):\n"
+            "        self.name = name\n\n"
+            "    def run_task(self, count: int) -> int:\n"
+            "        return count * 2\n\n"
+            "def top_level_fn() -> str:\n"
+            "    return 'done'\n"
+        )
+        vm.write_file("/tmp/task.py", py_code)
+        py_sym_resp, _ = vm.get_symbols("/tmp/task.py")
+        assert py_sym_resp.status == 0
+        assert "class TaskRunner" in py_sym_resp.symbols_text
+        assert "method TaskRunner::run_task" in py_sym_resp.symbols_text
+        assert "function top_level_fn" in py_sym_resp.symbols_text
+
+        py_slice_resp, _ = vm.get_slice("/tmp/task.py", "TaskRunner.run_task")
+        assert py_slice_resp.status == 0
+        assert "return count * 2" in py_slice_resp.content
+
+        # 11. Test TypeScript AST symbol extraction and slicing
+        ts_code = (
+            "interface User {\n"
+            "    id: number;\n"
+            "}\n\n"
+            "class AuthService {\n"
+            "    login(token: string): boolean {\n"
+            "        return token.length > 0;\n"
+            "    }\n"
+            "}\n\n"
+            "function computeHash(data: string): string {\n"
+            "    return data;\n"
+            "}\n"
+        )
+        vm.write_file("/tmp/service.ts", ts_code)
+        ts_sym_resp, _ = vm.get_symbols("/tmp/service.ts")
+        assert ts_sym_resp.status == 0
+        assert "class AuthService" in ts_sym_resp.symbols_text
+        assert "method AuthService::login" in ts_sym_resp.symbols_text
+        assert "function computeHash" in ts_sym_resp.symbols_text
+
+        ts_slice_resp, _ = vm.get_slice("/tmp/service.ts", "AuthService.login")
+        assert ts_slice_resp.status == 0
+        assert "return token.length > 0;" in ts_slice_resp.content

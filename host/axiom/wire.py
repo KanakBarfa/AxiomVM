@@ -24,6 +24,10 @@ class Opcode(IntEnum):
     AST_PATCH_RESPONSE = 0x0025
     CDP_ACTION = 0x0030
     CDP_ACTION_RESPONSE = 0x0031
+    READ_FILE = 0x0040
+    READ_FILE_RESPONSE = 0x0041
+    WRITE_FILE = 0x0042
+    WRITE_FILE_RESPONSE = 0x0043
     SHUTDOWN = 0x00FF
 
 
@@ -336,4 +340,107 @@ def decode_cdp_response(payload: bytes) -> CdpActionResponse:
         status=status,
         node_count=node_count,
         tree_text=tree_text,
+    )
+
+
+READ_FILE_REQ_FORMAT = "<IIHH"
+READ_FILE_REQ_HEADER_SIZE = 12
+READ_FILE_RESP_FORMAT = "<iII"
+READ_FILE_RESP_HEADER_SIZE = 12
+
+WRITE_FILE_REQ_FORMAT = "<IIHHI"
+WRITE_FILE_REQ_HEADER_SIZE = 16
+WRITE_FILE_RESP_FORMAT = "<iI"
+WRITE_FILE_RESP_HEADER_SIZE = 8
+
+
+@dataclass(frozen=True, slots=True)
+class ReadFileRequest:
+    """Request parameters for reading file from appliance."""
+
+    path: str
+    offset: int = 0
+    max_bytes: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ReadFileResponse:
+    """Result of file read from appliance."""
+
+    status: int
+    total_size: int
+    content: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class WriteFileRequest:
+    """Request parameters for writing file to appliance."""
+
+    path: str
+    content: bytes
+    append: bool = False
+    mode: int = 0o644
+
+
+@dataclass(frozen=True, slots=True)
+class WriteFileResponse:
+    """Result of file write to appliance."""
+
+    status: int
+    bytes_written: int
+
+
+def encode_read_file_request(req: ReadFileRequest) -> bytes:
+    """Serializes a ReadFileRequest into binary payload bytes."""
+    path_bytes = req.path.encode("utf-8")
+    hdr = struct.pack(
+        READ_FILE_REQ_FORMAT,
+        req.offset,
+        req.max_bytes,
+        len(path_bytes),
+        0,
+    )
+    return hdr + path_bytes
+
+
+def decode_read_file_response(payload: bytes) -> ReadFileResponse:
+    """Parses binary response payload into a ReadFileResponse dataclass."""
+    if len(payload) < READ_FILE_RESP_HEADER_SIZE:
+        raise ValueError("Payload underflow decoding ReadFileResponse")
+    status, total_size, content_len = struct.unpack(
+        READ_FILE_RESP_FORMAT, payload[:READ_FILE_RESP_HEADER_SIZE]
+    )
+    data = payload[READ_FILE_RESP_HEADER_SIZE : READ_FILE_RESP_HEADER_SIZE + content_len]
+    return ReadFileResponse(
+        status=status,
+        total_size=total_size,
+        content=data,
+    )
+
+
+def encode_write_file_request(req: WriteFileRequest) -> bytes:
+    """Serializes a WriteFileRequest into binary payload bytes."""
+    path_bytes = req.path.encode("utf-8")
+    flags = 1 if req.append else 0
+    hdr = struct.pack(
+        WRITE_FILE_REQ_FORMAT,
+        flags,
+        req.mode,
+        len(path_bytes),
+        0,
+        len(req.content),
+    )
+    return hdr + path_bytes + req.content
+
+
+def decode_write_file_response(payload: bytes) -> WriteFileResponse:
+    """Parses binary response payload into a WriteFileResponse dataclass."""
+    if len(payload) < WRITE_FILE_RESP_HEADER_SIZE:
+        raise ValueError("Payload underflow decoding WriteFileResponse")
+    status, bytes_written = struct.unpack(
+        WRITE_FILE_RESP_FORMAT, payload[:WRITE_FILE_RESP_HEADER_SIZE]
+    )
+    return WriteFileResponse(
+        status=status,
+        bytes_written=bytes_written,
     )

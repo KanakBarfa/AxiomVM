@@ -28,6 +28,10 @@ enum class Opcode : uint16_t {
     AstPatchResponse = 0x0025,
     CdpAction = 0x0030,
     CdpActionResponse = 0x0031,
+    ReadFile = 0x0040,
+    ReadFileResponse = 0x0041,
+    WriteFile = 0x0042,
+    WriteFileResponse = 0x0043,
     Shutdown = 0x00FF,
 };
 
@@ -416,6 +420,98 @@ static_assert(sizeof(CdpActionResponseHeader) == CDP_RESP_HEADER_SIZE,
     }
     std::memcpy(buf.data(), &resp, sizeof(CdpActionResponseHeader));
     return sizeof(CdpActionResponseHeader);
+}
+
+inline constexpr size_t READ_FILE_REQ_HEADER_SIZE = 12;
+inline constexpr size_t READ_FILE_RESP_HEADER_SIZE = 12;
+
+/// Request payload header for Opcode::ReadFile.
+struct [[gnu::packed]] ReadFileRequestHeader {
+    uint32_t offset{0};
+    uint32_t max_bytes{0};
+    uint16_t path_len{0};
+    uint16_t reserved{0};
+};
+
+static_assert(sizeof(ReadFileRequestHeader) == READ_FILE_REQ_HEADER_SIZE,
+              "ReadFileRequestHeader must be 12 bytes");
+
+/// Response payload header for Opcode::ReadFileResponse.
+struct [[gnu::packed]] ReadFileResponseHeader {
+    int32_t status{0};
+    uint32_t total_size{0};
+    uint32_t content_len{0};
+};
+
+static_assert(sizeof(ReadFileResponseHeader) == READ_FILE_RESP_HEADER_SIZE,
+              "ReadFileResponseHeader must be 12 bytes");
+
+inline constexpr size_t WRITE_FILE_REQ_HEADER_SIZE = 16;
+inline constexpr size_t WRITE_FILE_RESP_HEADER_SIZE = 8;
+
+/// Request payload header for Opcode::WriteFile.
+struct [[gnu::packed]] WriteFileRequestHeader {
+    uint32_t flags{0};
+    uint32_t mode{0644};
+    uint16_t path_len{0};
+    uint16_t reserved{0};
+    uint32_t content_len{0};
+};
+
+static_assert(sizeof(WriteFileRequestHeader) == WRITE_FILE_REQ_HEADER_SIZE,
+              "WriteFileRequestHeader must be 16 bytes");
+
+/// Response payload header for Opcode::WriteFileResponse.
+struct [[gnu::packed]] WriteFileResponseHeader {
+    int32_t status{0};
+    uint32_t bytes_written{0};
+};
+
+static_assert(sizeof(WriteFileResponseHeader) == WRITE_FILE_RESP_HEADER_SIZE,
+              "WriteFileResponseHeader must be 8 bytes");
+
+/// Decodes a ReadFileRequestHeader from a raw buffer.
+[[nodiscard]] constexpr auto decode_read_file_request(std::span<const uint8_t> buffer)
+    -> Result<ReadFileRequestHeader> {
+    if (buffer.size() < sizeof(ReadFileRequestHeader)) {
+        return std::unexpected(SystemError::BufferUnderflow);
+    }
+    ReadFileRequestHeader req{};
+    std::memcpy(&req, buffer.data(), sizeof(ReadFileRequestHeader));
+    return req;
+}
+
+/// Serializes a ReadFileResponseHeader into a target buffer.
+[[nodiscard]] constexpr auto encode_read_file_response(const ReadFileResponseHeader& resp,
+                                                       std::span<uint8_t> buf) noexcept
+    -> Result<size_t> {
+    if (buf.size() < sizeof(ReadFileResponseHeader)) {
+        return std::unexpected(SystemError::BufferOverflow);
+    }
+    std::memcpy(buf.data(), &resp, sizeof(ReadFileResponseHeader));
+    return sizeof(ReadFileResponseHeader);
+}
+
+/// Decodes a WriteFileRequestHeader from a raw buffer.
+[[nodiscard]] constexpr auto decode_write_file_request(std::span<const uint8_t> buffer)
+    -> Result<WriteFileRequestHeader> {
+    if (buffer.size() < sizeof(WriteFileRequestHeader)) {
+        return std::unexpected(SystemError::BufferUnderflow);
+    }
+    WriteFileRequestHeader req{};
+    std::memcpy(&req, buffer.data(), sizeof(WriteFileRequestHeader));
+    return req;
+}
+
+/// Serializes a WriteFileResponseHeader into a target buffer.
+[[nodiscard]] constexpr auto encode_write_file_response(const WriteFileResponseHeader& resp,
+                                                        std::span<uint8_t> buf) noexcept
+    -> Result<size_t> {
+    if (buf.size() < sizeof(WriteFileResponseHeader)) {
+        return std::unexpected(SystemError::BufferOverflow);
+    }
+    std::memcpy(buf.data(), &resp, sizeof(WriteFileResponseHeader));
+    return sizeof(WriteFileResponseHeader);
 }
 
 } // namespace axiom::wire

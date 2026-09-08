@@ -7,6 +7,7 @@ from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
+from axiom.assets import resolve_assets
 from axiom.snapshot import SnapshotInfo
 from axiom.vm import MicroVM
 from axiom.wire import CdpActionRequest, CdpActionType
@@ -28,8 +29,11 @@ def get_or_create_vm() -> MicroVM:
     if _active_vm is not None and _active_vm.process is not None:
         return _active_vm
 
-    kernel_path = Path(os.environ.get("AXIOM_KERNEL_PATH", str(DEFAULT_KERNEL)))
-    rootfs_path = Path(os.environ.get("AXIOM_ROOTFS_PATH", str(DEFAULT_ROOTFS)))
+    kernel_path, rootfs_path = resolve_assets(auto_download=True)
+    if kernel_path is None:
+        kernel_path = Path(os.environ.get("AXIOM_KERNEL_PATH", str(DEFAULT_KERNEL)))
+    if rootfs_path is None:
+        rootfs_path = Path(os.environ.get("AXIOM_ROOTFS_PATH", str(DEFAULT_ROOTFS)))
     work_dir = Path(os.environ.get("AXIOM_WORK_DIR", "/tmp/axiom_mcp_primary"))
 
     _active_vm = MicroVM(
@@ -101,6 +105,48 @@ def axiom_ast_patch(
         f"Patched '{symbol_name}' in {file_path} ({latency * 1000:.2f}ms): "
         f"old lines [L{resp.old_start_line}-L{resp.old_end_line}], "
         f"new lines [L{resp.old_start_line}-L{resp.new_end_line}]."
+    )
+
+
+@server.tool()
+def axiom_read_file(
+    file_path: str,
+    offset: int = 0,
+    max_bytes: int = 65536,
+) -> str:
+    """Reads file content directly from microVM guest filesystem over virtio-vsock."""
+    vm = get_or_create_vm()
+    resp, latency = vm.read_file(file_path, offset=offset, max_bytes=max_bytes)
+    if resp.status != 0:
+        return (
+            f"Error reading {file_path} (status {resp.status}, {latency * 1000:.2f}ms)"
+        )
+    try:
+        content_text = resp.content.decode("utf-8")
+    except UnicodeDecodeError:
+        content_text = resp.content.hex()
+    return (
+        f"File {file_path} [{len(resp.content)}/{resp.total_size} B] "
+        f"({latency * 1000:.2f}ms):\n{content_text}"
+    )
+
+
+@server.tool()
+def axiom_write_file(
+    file_path: str,
+    content: str,
+    append: bool = False,
+) -> str:
+    """Writes text content to a file on microVM guest filesystem over virtio-vsock."""
+    vm = get_or_create_vm()
+    resp, latency = vm.write_file(file_path, content, append=append)
+    if resp.status != 0:
+        return (
+            f"Error writing to {file_path} (status {resp.status}, {latency * 1000:.2f}ms)"
+        )
+    return (
+        f"Successfully wrote {resp.bytes_written} bytes to {file_path} "
+        f"({latency * 1000:.2f}ms)"
     )
 
 

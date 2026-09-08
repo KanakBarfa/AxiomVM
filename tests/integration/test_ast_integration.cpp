@@ -154,6 +154,62 @@ void test_c_ast_integration(axiom::ast::AstEngine& engine) {
     check(slice.content.find("val * 2") != std::string_view::npos, "C slice content mismatch");
 }
 
+void test_python_ast_integration(axiom::ast::AstEngine& engine) {
+    constexpr std::string_view py_source = "import os\n"
+                                           "class TaskRunner:\n"
+                                           "    def run_task(self, name):\n"
+                                           "        print(name)\n"
+                                           "        return True\n"
+                                           "def global_helper():\n"
+                                           "    return 42\n";
+
+    axiom::FixedVector<axiom::ast::SymbolInfo, axiom::ast::MAX_SYMBOLS> symbols{};
+    auto ext_res = engine.extract_symbols(py_source, axiom::ast::Lang::Python, symbols);
+    check(ext_res.has_value(), "Python symbol extraction failed");
+    check(symbols.size() >= 4, "Expected at least 4 Python symbols");
+
+    axiom::ast::SymbolSlice slice{};
+    auto slice_res =
+        engine.slice_symbol(py_source, axiom::ast::Lang::Python, "TaskRunner.run_task", slice);
+    check(slice_res.has_value(), "Slice Python TaskRunner.run_task failed");
+    check(slice.content.find("print(name)") != std::string_view::npos,
+          "Python slice content mismatch");
+
+    axiom::ast::SymbolSlice slice_fn{};
+    auto slice_fn_res =
+        engine.slice_symbol(py_source, axiom::ast::Lang::Python, "global_helper", slice_fn);
+    check(slice_fn_res.has_value(), "Slice Python global_helper failed");
+    check(slice_fn.content.find("return 42") != std::string_view::npos,
+          "Python function slice mismatch");
+}
+
+void test_typescript_ast_integration(axiom::ast::AstEngine& engine) {
+    constexpr std::string_view ts_source = "import { EventEmitter } from 'events';\n"
+                                           "interface Config {\n"
+                                           "    timeout: number;\n"
+                                           "}\n"
+                                           "export class ServiceClient {\n"
+                                           "    execute(cmd: string): boolean {\n"
+                                           "        return true;\n"
+                                           "    }\n"
+                                           "}\n"
+                                           "export function createClient(): ServiceClient {\n"
+                                           "    return new ServiceClient();\n"
+                                           "}\n";
+
+    axiom::FixedVector<axiom::ast::SymbolInfo, axiom::ast::MAX_SYMBOLS> symbols{};
+    auto ext_res = engine.extract_symbols(ts_source, axiom::ast::Lang::TypeScript, symbols);
+    check(ext_res.has_value(), "TypeScript symbol extraction failed");
+    check(symbols.size() >= 4, "Expected at least 4 TypeScript symbols");
+
+    axiom::ast::SymbolSlice slice{};
+    auto slice_res = engine.slice_symbol(ts_source, axiom::ast::Lang::TypeScript,
+                                         "ServiceClient.execute", slice);
+    check(slice_res.has_value(), "Slice TypeScript ServiceClient.execute failed");
+    check(slice.content.find("return true;") != std::string_view::npos,
+          "TypeScript slice content mismatch");
+}
+
 } // namespace
 
 /// Runs integration tests verifying multi-language AST symbolic extraction, slicing, and patching.
@@ -163,6 +219,8 @@ auto main() -> int {
     test_rust_ast_integration(engine);
     test_go_ast_integration(engine);
     test_c_ast_integration(engine);
+    test_python_ast_integration(engine);
+    test_typescript_ast_integration(engine);
 
     std::printf("[integration-test] AST engine multi-language integration tests passed\n");
     return EXIT_SUCCESS;

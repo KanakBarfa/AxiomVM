@@ -7,9 +7,11 @@ import os
 import socket
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Self
 
+from axiom.assets import resolve_assets
 from axiom.snapshot import SnapshotInfo, copy_or_reflink, update_snapshot_state
 from axiom.wire import (
     EXEC_FLAG_CAPTURE_DIFF,
@@ -27,19 +29,35 @@ from axiom.wire import (
     ExecRequest,
     ExecResponse,
     Opcode,
+    ReadFileRequest,
+    ReadFileResponse,
+    WriteFileRequest,
+    WriteFileResponse,
     decode_ast_patch_response,
     decode_ast_slice_response,
     decode_ast_symbols_response,
     decode_cdp_response,
     decode_exec_response,
     decode_header,
+    decode_read_file_response,
+    decode_write_file_response,
     encode_ast_patch_request,
     encode_ast_slice_request,
     encode_ast_symbols_request,
     encode_cdp_request,
     encode_exec_request,
     encode_frame,
+    encode_read_file_request,
+    encode_write_file_request,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class MountSpec:
+    """Represents a host to guest directory mapping."""
+
+    host_path: Path
+    guest_path: str
 
 
 class MicroVMError(RuntimeError):
@@ -51,16 +69,32 @@ class MicroVM:
 
     def __init__(
         self,
-        kernel_path: str | Path,
-        rootfs_path: str | Path,
+        kernel_path: str | Path | None = None,
+        rootfs_path: str | Path | None = None,
         firecracker_bin: str | Path = "/usr/local/bin/firecracker",
         vcpu_count: int = 1,
         mem_size_mib: int = 128,
         guest_cid: int = 3,
         guest_port: int = 5200,
         work_dir: str | Path = "/tmp/axiom_vm",
+        mounts: list[str] | list[MountSpec] | None = None,
     ) -> None:
         """Initializes MicroVM configuration parameters."""
+        if kernel_path is None or rootfs_path is None:
+            resolved_k, resolved_r = resolve_assets()
+            if kernel_path is None:
+                if resolved_k is None:
+                    raise MicroVMError(
+                        "Kernel path not specified and could not be resolved"
+                    )
+                kernel_path = resolved_k
+            if rootfs_path is None:
+                if resolved_r is None:
+                    raise MicroVMError(
+                        "Rootfs path not specified and could not be resolved"
+                    )
+                rootfs_path = resolved_r
+
         self.kernel_path = Path(kernel_path).resolve()
         self.rootfs_path = Path(rootfs_path).resolve()
         self.firecracker_bin = str(firecracker_bin)
@@ -69,6 +103,23 @@ class MicroVM:
         self.guest_cid = guest_cid
         self.guest_port = guest_port
         self.work_dir = Path(work_dir)
+        self.boot_duration: float = 0.0
+
+        self.mounts: list[MountSpec] = []
+        if mounts:
+            for m in mounts:
+                if isinstance(m, MountSpec):
+                    self.mounts.append(m)
+                elif isinstance(m, str):
+                    if ":" in m:
+                        hp, gp = m.split(":", 1)
+                    else:
+                        hp, gp = m, "/workspace"
+                    self.mounts.append(
+                        MountSpec(
+                            host_path=Path(hp).resolve(), guest_path=gp.rstrip("/")
+                        )
+                    )
 
         self.api_sock = self.work_dir / "firecracker.sock"
         self.vsock_path = self.work_dir / "vsock.sock"
@@ -80,6 +131,7 @@ class MicroVM:
 
     def start(self) -> None:
         """Boots the microVM instance and configures kernel, drives, and vsock."""
+        t_start = time.perf_counter()
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self._cleanup_sockets()
 
@@ -138,6 +190,7 @@ class MicroVM:
                 "action_type": "InstanceStart",
             },
         )
+        self.boot_duration = time.perf_counter() - t_start
 
     def connect_vsock(self, timeout_sec: float = 5.0) -> socket.socket:
         """Establishes stream connection to guest appliance daemon over virtio-vsock."""
@@ -203,6 +256,7 @@ class MicroVM:
         timeout_ms: int = 5000,
         strip_ansi: bool = True,
         capture_diff: bool = True,
+        sync_mounts: bool = True,
         request_id: int = 100,
     ) -> tuple[ExecResponse, float]:
         """Executes a command inside the appliance over vsock and returns response and latency."""
@@ -210,6 +264,13 @@ class MicroVM:
             self.connect_vsock()
 
         assert self.vsock_conn is not None
+
+        if sync_mounts and self.mounts:
+            self.sync_mounts_to_guest()
+
+        effective_cwd = cwd
+        if not effective_cwd and self.mounts:
+            effective_cwd = self.mounts[0].guest_path
 
         flags = 0
         if strip_ansi:
@@ -219,7 +280,7 @@ class MicroVM:
 
         req = ExecRequest(
             command=command,
-            cwd=cwd,
+            cwd=effective_cwd,
             timeout_ms=timeout_ms,
             flags=flags,
         )
@@ -251,7 +312,209 @@ class MicroVM:
 
         latency = time.perf_counter() - t_start
         exec_resp = decode_exec_response(resp_payload)
+
+        if sync_mounts and self.mounts and capture_diff and exec_resp.diff:
+            self.sync_mounts_from_guest(exec_resp.diff)
+
         return exec_resp, latency
+
+    def read_file(
+        self,
+        path: str,
+        offset: int = 0,
+        max_bytes: int = 65536,
+        request_id: int = 210,
+    ) -> tuple[ReadFileResponse, float]:
+        """Reads file bytes directly from appliance over virtio-vsock."""
+        if not self.vsock_conn:
+            self.connect_vsock()
+
+        assert self.vsock_conn is not None
+
+        req = ReadFileRequest(path=path, offset=offset, max_bytes=max_bytes)
+        payload = encode_read_file_request(req)
+        frame = encode_frame(Opcode.READ_FILE, request_id, payload)
+
+        t_start = time.perf_counter()
+        self.vsock_conn.sendall(frame)
+
+        resp_header_bytes = b""
+        while len(resp_header_bytes) < HEADER_SIZE:
+            chunk = self.vsock_conn.recv(HEADER_SIZE - len(resp_header_bytes))
+            if not chunk:
+                raise MicroVMError(
+                    "Socket closed while awaiting ReadFile response header"
+                )
+            resp_header_bytes += chunk
+
+        header = decode_header(resp_header_bytes)
+        if header.opcode != Opcode.READ_FILE_RESPONSE:
+            raise MicroVMError(
+                f"Unexpected opcode in response: {header.opcode:04X}, expected {Opcode.READ_FILE_RESPONSE:04X}"
+            )
+
+        resp_payload = b""
+        while len(resp_payload) < header.payload_len:
+            chunk = self.vsock_conn.recv(header.payload_len - len(resp_payload))
+            if not chunk:
+                raise MicroVMError(
+                    "Socket closed while awaiting ReadFile response payload"
+                )
+            resp_payload += chunk
+
+        latency = time.perf_counter() - t_start
+        resp = decode_read_file_response(resp_payload)
+        return resp, latency
+
+    def write_file(
+        self,
+        path: str,
+        content: bytes | str,
+        append: bool = False,
+        mode: int = 0o644,
+        request_id: int = 211,
+    ) -> tuple[WriteFileResponse, float]:
+        """Writes binary or text content to guest filesystem over virtio-vsock."""
+        if not self.vsock_conn:
+            self.connect_vsock()
+
+        assert self.vsock_conn is not None
+
+        content_bytes = content.encode("utf-8") if isinstance(content, str) else content
+        req = WriteFileRequest(
+            path=path, content=content_bytes, append=append, mode=mode
+        )
+        payload = encode_write_file_request(req)
+        frame = encode_frame(Opcode.WRITE_FILE, request_id, payload)
+
+        t_start = time.perf_counter()
+        self.vsock_conn.sendall(frame)
+
+        resp_header_bytes = b""
+        while len(resp_header_bytes) < HEADER_SIZE:
+            chunk = self.vsock_conn.recv(HEADER_SIZE - len(resp_header_bytes))
+            if not chunk:
+                raise MicroVMError(
+                    "Socket closed while awaiting WriteFile response header"
+                )
+            resp_header_bytes += chunk
+
+        header = decode_header(resp_header_bytes)
+        if header.opcode != Opcode.WRITE_FILE_RESPONSE:
+            raise MicroVMError(
+                f"Unexpected opcode in response: {header.opcode:04X}, expected {Opcode.WRITE_FILE_RESPONSE:04X}"
+            )
+
+        resp_payload = b""
+        while len(resp_payload) < header.payload_len:
+            chunk = self.vsock_conn.recv(header.payload_len - len(resp_payload))
+            if not chunk:
+                raise MicroVMError(
+                    "Socket closed while awaiting WriteFile response payload"
+                )
+            resp_payload += chunk
+
+        latency = time.perf_counter() - t_start
+        resp = decode_write_file_response(resp_payload)
+        return resp, latency
+
+    def read_file_all(self, path: str) -> bytes:
+        """Reads complete file content from appliance across chunk boundaries."""
+        resp, _ = self.read_file(path, offset=0, max_bytes=0)
+        if resp.status != 0:
+            raise MicroVMError(f"Failed to read file '{path}': status {resp.status}")
+        data = bytearray(resp.content)
+        while len(data) < resp.total_size:
+            chunk_resp, _ = self.read_file(path, offset=len(data), max_bytes=0)
+            if chunk_resp.status != 0 or not chunk_resp.content:
+                break
+            data.extend(chunk_resp.content)
+        return bytes(data)
+
+    def write_file_all(
+        self,
+        path: str,
+        content: bytes | str,
+        mode: int = 0o644,
+        chunk_size: int = 32768,
+    ) -> int:
+        """Writes arbitrary-length content to guest file using chunked appends."""
+        content_bytes = content.encode("utf-8") if isinstance(content, str) else content
+        if not content_bytes:
+            resp, _ = self.write_file(path, b"", append=False, mode=mode)
+            return resp.bytes_written
+
+        total_written = 0
+        for i in range(0, len(content_bytes), chunk_size):
+            chunk = content_bytes[i : i + chunk_size]
+            append = i > 0
+            resp, _ = self.write_file(path, chunk, append=append, mode=mode)
+            if resp.status != 0:
+                raise MicroVMError(
+                    f"Failed writing chunk to '{path}': status {resp.status}"
+                )
+            total_written += resp.bytes_written
+        return total_written
+
+    def sync_mounts_to_guest(self) -> int:
+        """Synchronizes all configured host mount directories into the guest microVM."""
+        total_files = 0
+        for m in self.mounts:
+            if not m.host_path.is_dir():
+                continue
+            for root, dirs, files in os.walk(m.host_path):
+                dirs[:] = [
+                    d
+                    for d in dirs
+                    if d not in {".git", ".venv", "__pycache__", "build", "target"}
+                ]
+                for file_name in files:
+                    local_file = Path(root) / file_name
+                    rel_path = local_file.relative_to(m.host_path)
+                    guest_file = f"{m.guest_path}/{rel_path.as_posix()}"
+                    try:
+                        content = local_file.read_bytes()
+                        self.write_file_all(guest_file, content)
+                        total_files += 1
+                    except OSError:
+                        pass
+        return total_files
+
+    def sync_mounts_from_guest(self, diff_text: str | None = None) -> int:
+        """Synchronizes modified or created files from guest back to host directories."""
+        if not self.mounts:
+            return 0
+        total_synced = 0
+        if diff_text:
+            for line in diff_text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                tokens = line.split()
+                if len(tokens) < 2:
+                    continue
+                action, guest_file = tokens[0], tokens[1]
+                for m in self.mounts:
+                    if guest_file == m.guest_path or guest_file.startswith(
+                        m.guest_path + "/"
+                    ):
+                        rel_path = guest_file[len(m.guest_path) :].lstrip("/")
+                        target_file = m.host_path / rel_path
+                        if action in ("+", "M"):
+                            try:
+                                data = self.read_file_all(guest_file)
+                                target_file.parent.mkdir(parents=True, exist_ok=True)
+                                target_file.write_bytes(data)
+                                total_synced += 1
+                            except Exception:
+                                pass
+                        elif action == "-":
+                            try:
+                                target_file.unlink(missing_ok=True)
+                                total_synced += 1
+                            except OSError:
+                                pass
+        return total_synced
 
     def get_symbols(
         self,

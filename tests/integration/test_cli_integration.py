@@ -25,6 +25,7 @@ def test_cli_help() -> None:
     assert "AxiomVM: The Token-First MicroVM Appliance for AI Agents" in proc.stdout
     assert "check" in proc.stdout
     assert "info" in proc.stdout
+    assert "setup" in proc.stdout
     assert "mcp" in proc.stdout
     assert "run" in proc.stdout
     assert "exec" in proc.stdout
@@ -93,3 +94,60 @@ def test_cli_exec_e2e() -> None:
     )
     assert proc.returncode == 0
     assert "CLI_INTEGRATION_SUCCESS" in proc.stdout
+
+
+def test_cli_setup_help() -> None:
+    """Verifies that axiom setup --help displays options."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "axiom.cli", "setup", "--help"],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "host")},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    assert "--cache-dir" in proc.stdout
+    assert "--force" in proc.stdout
+
+
+def test_cli_mount_e2e(tmp_path: Path) -> None:
+    """Verifies that axiom exec supports --mount directory syncing."""
+    kernel_path = REPO_ROOT / "tools" / "kernel" / "vmlinux"
+    rootfs_path = REPO_ROOT / "build" / "axiom-rootfs.ext4"
+
+    if not kernel_path.exists() or not rootfs_path.exists():
+        pytest.skip("Appliance kernel or rootfs missing")
+
+    if not os.access("/dev/kvm", os.R_OK | os.W_OK):
+        pytest.skip("/dev/kvm not accessible")
+
+    mount_dir = tmp_path / "cli_workspace"
+    mount_dir.mkdir(parents=True, exist_ok=True)
+    (mount_dir / "input.txt").write_text("hello from host\n")
+
+    work_dir = tmp_path / "cli_mount_work"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "axiom.cli",
+            "exec",
+            "cat input.txt && echo 'output data' > output.txt",
+            "--mount",
+            f"{mount_dir}:/workspace",
+            "--work-dir",
+            str(work_dir),
+            "--cid",
+            "26",
+            "--port",
+            "5200",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "host")},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    assert "hello from host" in proc.stdout
+    assert (mount_dir / "output.txt").is_file()
+    assert "output data" in (mount_dir / "output.txt").read_text()

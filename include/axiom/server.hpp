@@ -6,10 +6,12 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <poll.h>
 #include <span>
 #include <sys/epoll.h>
 #include <sys/reboot.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
@@ -26,7 +28,7 @@
 namespace axiom::server {
 
 inline constexpr size_t MAX_CLIENTS = 4;
-inline constexpr size_t BUFFER_CAPACITY = 4096;
+inline constexpr size_t BUFFER_CAPACITY = 65536;
 
 /// Tracks per-connection reception state without heap allocations.
 struct ClientSlot {
@@ -208,7 +210,7 @@ private:
         }
 
         if ((events & EPOLLIN) != 0) {
-            std::array<uint8_t, 512> chunk{};
+            std::array<uint8_t, 4096> chunk{};
             ssize_t bytes_read = read(client_fd, chunk.data(), chunk.size());
             if (bytes_read > 0) {
                 for (ssize_t i = 0; i < bytes_read; ++i) {
@@ -275,7 +277,24 @@ private:
         size_t written = 0;
         while (written < len) {
             ssize_t n = write(fd, ptr + written, len - written);
-            if (n <= 0) {
+            if (n < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    struct pollfd pfd{
+                        .fd = fd,
+                        .events = POLLOUT,
+                        .revents = 0,
+                    };
+                    int ret = poll(&pfd, 1, 5000);
+                    if (ret > 0 && (pfd.revents & POLLOUT) != 0) {
+                        continue;
+                    }
+                }
+                return false;
+            }
+            if (n == 0) {
                 return false;
             }
             written += static_cast<size_t>(n);
@@ -321,6 +340,14 @@ private:
         }
         case wire::Opcode::CdpAction: {
             handle_cdp(slot, header);
+            break;
+        }
+        case wire::Opcode::ReadFile: {
+            handle_read_file(slot, header);
+            break;
+        }
+        case wire::Opcode::WriteFile: {
+            handle_write_file(slot, header);
             break;
         }
         case wire::Opcode::Shutdown: {
@@ -839,6 +866,193 @@ private:
                     slot->reset();
                     return;
                 }
+            }
+        }
+    }
+
+    /// Handles a ReadFile request and streams file bytes.
+    void handle_read_file(ClientSlot* slot, const wire::FrameHeader& header) noexcept {
+        if (header.payload_len < wire::READ_FILE_REQ_HEADER_SIZE) {
+            return;
+        }
+
+        auto payload = slot->rx_buffer.as_span().subspan(wire::HEADER_SIZE, header.payload_len);
+        auto req_res = wire::decode_read_file_request(payload);
+        if (!req_res) {
+            return;
+        }
+
+        const auto& req = *req_res;
+        if (header.payload_len < wire::READ_FILE_REQ_HEADER_SIZE + req.path_len) {
+            return;
+        }
+
+        const char* path_data =
+            reinterpret_cast<const char*>(payload.data() + wire::READ_FILE_REQ_HEADER_SIZE);
+        std::string_view path(path_data, req.path_len);
+
+        wire::ReadFileResponseHeader resp_hdr{};
+        size_t bytes_to_send = 0;
+
+        if (path.empty() || path.size() >= 4096) {
+            resp_hdr.status = -EINVAL;
+        } else {
+            std::array<char, 4096> path_buf{};
+            std::memcpy(path_buf.data(), path.data(), path.size());
+            path_buf[path.size()] = '\0';
+
+            int fd = open(path_buf.data(), O_RDONLY | O_CLOEXEC);
+            if (fd < 0) {
+                resp_hdr.status = -errno;
+            } else {
+                struct stat st{};
+                if (fstat(fd, &st) == 0) {
+                    resp_hdr.total_size = static_cast<uint32_t>(st.st_size);
+                }
+
+                if (req.offset > 0) {
+                    if (lseek(fd, static_cast<off_t>(req.offset), SEEK_SET) < 0) {
+                        resp_hdr.status = -errno;
+                    }
+                }
+
+                if (resp_hdr.status == 0) {
+                    size_t max_read = ast_work_buf_.size();
+                    if (req.max_bytes > 0 && req.max_bytes < max_read) {
+                        max_read = req.max_bytes;
+                    }
+
+                    ssize_t n = read(fd, ast_work_buf_.data(), max_read);
+                    if (n < 0) {
+                        resp_hdr.status = -errno;
+                    } else {
+                        bytes_to_send = static_cast<size_t>(n);
+                        resp_hdr.status = 0;
+                        resp_hdr.content_len = static_cast<uint32_t>(bytes_to_send);
+                    }
+                }
+                close(fd);
+            }
+        }
+
+        uint32_t total_payload =
+            static_cast<uint32_t>(wire::READ_FILE_RESP_HEADER_SIZE + bytes_to_send);
+        wire::FrameHeader out_hdr{
+            .magic = wire::WIRE_MAGIC,
+            .opcode = static_cast<uint16_t>(wire::Opcode::ReadFileResponse),
+            .request_id = header.request_id,
+            .payload_len = total_payload,
+        };
+
+        std::array<uint8_t, wire::HEADER_SIZE + wire::READ_FILE_RESP_HEADER_SIZE> hdr_buf{};
+        auto enc1 = wire::encode_header(out_hdr, std::span(hdr_buf.data(), wire::HEADER_SIZE));
+        auto enc2 =
+            wire::encode_read_file_response(resp_hdr, std::span(hdr_buf.data() + wire::HEADER_SIZE,
+                                                                wire::READ_FILE_RESP_HEADER_SIZE));
+
+        if (enc1 && enc2) {
+            if (!write_all(slot->fd, hdr_buf.data(), hdr_buf.size())) {
+                (void)reactor_.remove(slot->fd);
+                slot->reset();
+                return;
+            }
+            if (bytes_to_send > 0) {
+                if (!write_all(slot->fd, ast_work_buf_.data(), bytes_to_send)) {
+                    (void)reactor_.remove(slot->fd);
+                    slot->reset();
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Handles a WriteFile request and writes content to disk.
+    void handle_write_file(ClientSlot* slot, const wire::FrameHeader& header) noexcept {
+        if (header.payload_len < wire::WRITE_FILE_REQ_HEADER_SIZE) {
+            return;
+        }
+
+        auto payload = slot->rx_buffer.as_span().subspan(wire::HEADER_SIZE, header.payload_len);
+        auto req_res = wire::decode_write_file_request(payload);
+        if (!req_res) {
+            return;
+        }
+
+        const auto& req = *req_res;
+        size_t needed = wire::WRITE_FILE_REQ_HEADER_SIZE + req.path_len + req.content_len;
+        if (header.payload_len < needed) {
+            return;
+        }
+
+        const char* path_data =
+            reinterpret_cast<const char*>(payload.data() + wire::WRITE_FILE_REQ_HEADER_SIZE);
+        std::string_view path(path_data, req.path_len);
+
+        const uint8_t* content_data =
+            payload.data() + wire::WRITE_FILE_REQ_HEADER_SIZE + req.path_len;
+
+        wire::WriteFileResponseHeader resp_hdr{};
+
+        if (path.empty() || path.size() >= 4096) {
+            resp_hdr.status = -EINVAL;
+        } else {
+            std::array<char, 4096> path_buf{};
+            std::memcpy(path_buf.data(), path.data(), path.size());
+            path_buf[path.size()] = '\0';
+
+            // Ensure parent directories exist
+            for (size_t i = 1; i < path.size(); ++i) {
+                if (path_buf[i] == '/') {
+                    path_buf[i] = '\0';
+                    (void)mkdir(path_buf.data(), 0755);
+                    path_buf[i] = '/';
+                }
+            }
+
+            int flags = O_WRONLY | O_CREAT | O_CLOEXEC;
+            if ((req.flags & 1) != 0) {
+                flags |= O_APPEND;
+            } else {
+                flags |= O_TRUNC;
+            }
+
+            mode_t mode = req.mode != 0 ? static_cast<mode_t>(req.mode) : 0644;
+            int fd = open(path_buf.data(), flags, mode);
+            if (fd < 0) {
+                resp_hdr.status = -errno;
+            } else {
+                if (req.content_len > 0) {
+                    if (!write_all(fd, content_data, req.content_len)) {
+                        resp_hdr.status = -errno;
+                    } else {
+                        resp_hdr.status = 0;
+                        resp_hdr.bytes_written = req.content_len;
+                    }
+                } else {
+                    resp_hdr.status = 0;
+                    resp_hdr.bytes_written = 0;
+                }
+                close(fd);
+            }
+        }
+
+        wire::FrameHeader out_hdr{
+            .magic = wire::WIRE_MAGIC,
+            .opcode = static_cast<uint16_t>(wire::Opcode::WriteFileResponse),
+            .request_id = header.request_id,
+            .payload_len = wire::WRITE_FILE_RESP_HEADER_SIZE,
+        };
+
+        std::array<uint8_t, wire::HEADER_SIZE + wire::WRITE_FILE_RESP_HEADER_SIZE> hdr_buf{};
+        auto enc1 = wire::encode_header(out_hdr, std::span(hdr_buf.data(), wire::HEADER_SIZE));
+        auto enc2 = wire::encode_write_file_response(
+            resp_hdr,
+            std::span(hdr_buf.data() + wire::HEADER_SIZE, wire::WRITE_FILE_RESP_HEADER_SIZE));
+
+        if (enc1 && enc2) {
+            if (!write_all(slot->fd, hdr_buf.data(), hdr_buf.size())) {
+                (void)reactor_.remove(slot->fd);
+                slot->reset();
             }
         }
     }
